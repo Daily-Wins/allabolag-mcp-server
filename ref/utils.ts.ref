@@ -1,0 +1,145 @@
+import fetch from "node-fetch";
+import * as cheerio from "cheerio";
+import { getCachedData, setCachedData, cleanExpiredCache } from "./cache.js";
+import { throttle } from "./throttle.js";
+
+// Rensa utgången cache vid uppstart
+cleanExpiredCache().catch(console.error);
+
+export interface CompanySearchResult {
+  name: string;
+  orgNumber: string;
+  address: string;
+  status: string;
+  url: string;
+}
+
+export interface CompanyDetails {
+  orgNumber: string;
+  name: string;
+  url: string;
+  companyForm?: string;
+  status?: string;
+  registered?: string;
+  city?: string;
+  municipality?: string;
+  county?: string;
+  address?: string;
+  industry?: string;
+  fSkatt?: string;
+  employees?: string;
+  revenue?: string;
+  profit?: string;
+}
+
+export interface Official {
+  name: string;
+  role: string;
+  since?: string;
+}
+
+export interface CompanyEvent {
+  date: string;
+  title: string;
+  description?: string;
+}
+
+export interface Owner {
+  name: string;
+  ownership: string;
+}
+
+/**
+ * Hämtar och parsar en sida från allabolag.se med cache och throttling
+ */
+export async function fetchPage(url: string): Promise<cheerio.CheerioAPI> {
+  // Försök hämta från cache först
+  const cachedData = await getCachedData(url);
+
+  if (cachedData) {
+    // Om cachad data finns, returnera den direkt (ingen throttling behövs)
+    return cheerio.load(cachedData);
+  }
+
+  // Om ingen cache finns, tillämpa throttling innan vi gör en ny request
+  await throttle();
+
+  console.error(`[FETCH] Hämtar från: ${url}`);
+
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+      "Accept-Language": "sv-SE,sv;q=0.9,en;q=0.8",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP-fel ${response.status}: ${response.statusText}`);
+  }
+
+  const html = await response.text();
+
+  // Spara i cache för framtida användning
+  await setCachedData(url, html);
+
+  return cheerio.load(html);
+}
+
+/**
+ * Normaliserar organisationsnummer till endast siffror
+ */
+export function normalizeOrgNumber(orgNumber: string): string {
+  return orgNumber.replace(/\D/g, "");
+}
+
+/**
+ * Formaterar organisationsnummer med bindestreck (XXXXXX-XXXX)
+ */
+export function formatOrgNumber(orgNumber: string): string {
+  const normalized = normalizeOrgNumber(orgNumber);
+  if (normalized.length === 10) {
+    return `${normalized.slice(0, 6)}-${normalized.slice(6)}`;
+  }
+  return normalized;
+}
+
+/**
+ * Extraherar text från element, returnerar tom sträng om inte hittas
+ */
+export function extractText($: cheerio.CheerioAPI, selector: string): string {
+  return $(selector).first().text().trim();
+}
+
+/**
+ * Extraherar attribut från element
+ */
+export function extractAttr($: cheerio.CheerioAPI, selector: string, attr: string): string | undefined {
+  return $(selector).first().attr(attr);
+}
+
+/**
+ * Rensar och formaterar text
+ */
+export function cleanText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Bygger URL för allabolag.se
+ */
+export function buildCompanyUrl(orgNumber: string, path: string = ""): string {
+  const normalized = normalizeOrgNumber(orgNumber);
+  return `https://www.allabolag.se/${normalized}${path}`;
+}
+
+/**
+ * Försöker hitta värde från flera möjliga selektorer
+ */
+export function trySelectors($: cheerio.CheerioAPI, selectors: string[]): string {
+  for (const selector of selectors) {
+    const value = extractText($, selector);
+    if (value) return value;
+  }
+  return "";
+}

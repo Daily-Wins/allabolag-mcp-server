@@ -1,0 +1,455 @@
+import * as cheerio from "cheerio";
+import {
+  fetchPage,
+  normalizeOrgNumber,
+  buildCompanyUrl,
+  extractText,
+  cleanText,
+  trySelectors,
+  CompanySearchResult,
+  CompanyDetails,
+  Official,
+  CompanyEvent,
+  Owner,
+} from "./utils.js";
+
+/**
+ * Hämtar korrekta URL:er för olika sidor från navigationen
+ */
+export async function getCompanyUrls(orgNumber: string): Promise<Record<string, string | null>> {
+  const normalizedOrgNumber = normalizeOrgNumber(orgNumber);
+  const baseUrl = buildCompanyUrl(normalizedOrgNumber);
+  const $ = await fetchPage(baseUrl);
+
+  const urls: Record<string, string | null> = {
+    base: baseUrl,
+    bokslut: null,
+    nyckeltal: null,
+    befattningar: null,
+    organisation: null,
+    handelser: null,
+    rapporter: null
+  };
+
+  // Hitta navigations-länkar
+  $('nav a, .nav-item a, .nav-link, .tab-link, [role="tab"]').each((_, el) => {
+    const $el = $(el);
+    const href = $el.attr('href');
+    const text = $el.text().trim().toLowerCase();
+
+    if (!href) return;
+
+    const fullUrl = href.startsWith('http') ? href : `https://www.allabolag.se${href}`;
+
+    if (text.includes('bokslut')) {
+      urls.bokslut = fullUrl;
+    } else if (text.includes('nyckeltal')) {
+      urls.nyckeltal = fullUrl;
+    } else if (text.includes('befattning')) {
+      urls.befattningar = fullUrl;
+    } else if (text.includes('organisation')) {
+      urls.organisation = fullUrl;
+    } else if (text.includes('händelse')) {
+      urls.handelser = fullUrl;
+    } else if (text.includes('rapport')) {
+      urls.rapporter = fullUrl;
+    }
+  });
+
+  return urls;
+}
+
+/**
+ * Söker efter bolag på allabolag.se
+ */
+export async function searchCompany(query: string): Promise<CompanySearchResult[]> {
+  const searchUrl = `https://www.allabolag.se/what/${encodeURIComponent(query)}`;
+  const $ = await fetchPage(searchUrl);
+
+  const results: CompanySearchResult[] = [];
+
+  // Först försök med den nya strukturen (SimpleSearchResultCard)
+  const searchCards = $(".SimpleSearchResultCard-card");
+
+  if (searchCards.length > 0) {
+    searchCards.each((_, element) => {
+      const $elem = $(element);
+      const $h2Link = $elem.find("h2 a").first();
+      const name = $h2Link.text().trim();
+      const link = $h2Link.attr("href");
+
+      // Extrahera hela H2 texten för att få stad/plats
+      const fullH2Text = $elem.find("h2").first().text().trim();
+      const addressPart = fullH2Text.replace(name, "").trim().replace(/^,\s*/, "");
+
+      if (name && link) {
+        results.push({
+          name,
+          orgNumber: extractOrgNumberFromText($elem.text()),
+          address: addressPart || $elem.find(".address, .location, span").first().text().trim(),
+          status: $elem.find(".status, .company-status").first().text().trim(),
+          url: link.startsWith("http") ? link : `https://www.allabolag.se${link}`,
+        });
+      }
+    });
+  } else {
+    // Fallback till andra möjliga selektorer
+    const searchHits = $(".search-hit, .company-row, .search-result-item, article, .company-card");
+
+    searchHits.each((_, element) => {
+      const $elem = $(element);
+      const nameLink = $elem.find("h2 a, h3 a, .company-name a, a.company-link, a[href*='/foretag/']").first();
+      const name = nameLink.text().trim();
+      const link = nameLink.attr("href");
+
+      if (name && link) {
+        results.push({
+          name,
+          orgNumber: extractOrgNumberFromText($elem.text()),
+          address: $elem.find(".address, .location, .company-address").first().text().trim(),
+          status: $elem.find(".status, .company-status").first().text().trim(),
+          url: link.startsWith("http") ? link : `https://www.allabolag.se${link}`,
+        });
+      }
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Extraherar organisationsnummer från text
+ */
+function extractOrgNumberFromText(text: string): string {
+  const match = text.match(/\d{6}[-\s]?\d{4}/);
+  return match ? normalizeOrgNumber(match[0]) : "";
+}
+
+/**
+ * Hämtar detaljerad bolagsinformation
+ */
+export async function getCompanyDetails(orgNumber: string): Promise<CompanyDetails> {
+  const normalizedOrgNumber = normalizeOrgNumber(orgNumber);
+  const url = buildCompanyUrl(normalizedOrgNumber);
+  const $ = await fetchPage(url);
+
+  const companyInfo: CompanyDetails = {
+    orgNumber: normalizedOrgNumber,
+    name: extractText($, "h1"),
+    url,
+  };
+
+  // Parsa faktatabell med olika möjliga strukturer
+  const factSelectors = [
+    ".company-facts tr",
+    ".fact-table tr",
+    ".info-table tr",
+    "table.facts tr",
+  ];
+
+  for (const selector of factSelectors) {
+    const rows = $(selector);
+    if (rows.length > 0) {
+      rows.each((_, row) => {
+        const $row = $(row);
+        const label = cleanText($row.find("th, td:first-child, .label").text());
+        const value = cleanText($row.find("td:last-child, .value").text());
+
+        if (label && value && label !== value) {
+          parseFactRow(companyInfo, label, value);
+        }
+      });
+      break;
+    }
+  }
+
+  // Försök hitta data från metadata eller andra strukturer
+  if (!companyInfo.companyForm) {
+    companyInfo.companyForm = trySelectors($, [
+      ".company-form",
+      "[itemprop='legalForm']",
+      ".legal-form",
+    ]);
+  }
+
+  if (!companyInfo.status) {
+    companyInfo.status = trySelectors($, [
+      ".company-status",
+      ".status-badge",
+      "[data-status]",
+    ]);
+  }
+
+  return companyInfo;
+}
+
+/**
+ * Parsar en rad från faktatabellen
+ */
+function parseFactRow(info: CompanyDetails, label: string, value: string) {
+  const lowerLabel = label.toLowerCase();
+  
+  if (lowerLabel.includes("organisations") || lowerLabel.includes("orgnr")) {
+    info.orgNumber = normalizeOrgNumber(value);
+  } else if (lowerLabel.includes("bolags") || lowerLabel.includes("form")) {
+    info.companyForm = value;
+  } else if (lowerLabel.includes("status")) {
+    info.status = value;
+  } else if (lowerLabel.includes("registr")) {
+    info.registered = value;
+  } else if (lowerLabel.includes("ort") && !lowerLabel.includes("kommun")) {
+    info.city = value;
+  } else if (lowerLabel.includes("kommun")) {
+    info.municipality = value;
+  } else if (lowerLabel.includes("län")) {
+    info.county = value;
+  } else if (lowerLabel.includes("adress")) {
+    info.address = value;
+  } else if (lowerLabel.includes("bransch") || lowerLabel.includes("sni")) {
+    info.industry = value;
+  } else if (lowerLabel.includes("f-skatt")) {
+    info.fSkatt = value;
+  } else if (lowerLabel.includes("anställd")) {
+    info.employees = value;
+  } else if (lowerLabel.includes("omsätt")) {
+    info.revenue = value;
+  } else if (lowerLabel.includes("resultat")) {
+    info.profit = value;
+  }
+}
+
+/**
+ * Hämtar ekonomiska nyckeltal
+ */
+export async function getCompanyFinancials(orgNumber: string): Promise<any> {
+  const normalizedOrgNumber = normalizeOrgNumber(orgNumber);
+  const url = buildCompanyUrl(normalizedOrgNumber, "/bokslut");
+  const $ = await fetchPage(url);
+
+  const financials: any = {
+    orgNumber: normalizedOrgNumber,
+    years: [],
+  };
+
+  // Hitta olika möjliga tabellstrukturer
+  const tableSelectors = [
+    ".financial-table",
+    ".bokslut-table",
+    "table.financials",
+    ".nyckeltal",
+  ];
+
+  let $table: cheerio.Cheerio<any> | null = null;
+  for (const selector of tableSelectors) {
+    $table = $(selector).first();
+    if ($table.length > 0) break;
+  }
+
+  if (!$table || $table.length === 0) {
+    return financials;
+  }
+
+  // Extrahera år från tabellhuvud
+  const years: string[] = [];
+  $table.find("thead th, thead td").each((_, th) => {
+    const year = $(th).text().trim();
+    if (year.match(/^\d{4}/)) {
+      years.push(year);
+    }
+  });
+
+  // Extrahera finansiell data
+  const data: Record<string, string[]> = {};
+  $table.find("tbody tr").each((_, row) => {
+    const $row = $(row);
+    const label = cleanText($row.find("th, td:first-child").text());
+    const values: string[] = [];
+
+    $row.find("td:not(:first-child)").each((_, td) => {
+      values.push(cleanText($(td).text()));
+    });
+
+    if (label && values.length > 0) {
+      data[label] = values;
+    }
+  });
+
+  // Strukturera data per år
+  years.forEach((year, index) => {
+    const yearData: any = { year };
+    Object.keys(data).forEach((key) => {
+      if (data[key][index]) {
+        yearData[key] = data[key][index];
+      }
+    });
+    if (Object.keys(yearData).length > 1) {
+      financials.years.push(yearData);
+    }
+  });
+
+  return financials;
+}
+
+/**
+ * Hämtar befattningshavare
+ */
+export async function getCompanyOfficials(orgNumber: string): Promise<{ orgNumber: string; officials: Official[] }> {
+  const normalizedOrgNumber = normalizeOrgNumber(orgNumber);
+
+  // Hämta rätt URL för befattningar från navigationen
+  const urls = await getCompanyUrls(orgNumber);
+  const url = urls.befattningar || buildCompanyUrl(normalizedOrgNumber, "/befattningar");
+
+  const $ = await fetchPage(url);
+
+  const officials: Official[] = [];
+
+  // Testa olika strukturer
+  const selectors = [
+    ".person-card",
+    ".official-card",
+    ".befattning",
+    "table.officials tr",
+    ".person-list-item",
+  ];
+
+  for (const selector of selectors) {
+    const elements = $(selector);
+    if (elements.length > 0) {
+      elements.each((_, element) => {
+        const $elem = $(element);
+        
+        let name: string, role: string, since: string;
+        
+        if (selector.includes("table")) {
+          const cells = $elem.find("td");
+          if (cells.length >= 2) {
+            name = cleanText($(cells[0]).text());
+            role = cleanText($(cells[1]).text());
+            since = cells.length > 2 ? cleanText($(cells[2]).text()) : "";
+          } else {
+            return;
+          }
+        } else {
+          name = trySelectors($, [".name", "h3", ".person-name"]);
+          role = trySelectors($, [".role", ".title", ".position"]);
+          since = trySelectors($, [".since", ".from-date"]);
+        }
+        
+        if (name && name !== "Namn" && name !== "Person") {
+          officials.push({ name, role, since });
+        }
+      });
+      
+      if (officials.length > 0) break;
+    }
+  }
+
+  return {
+    orgNumber: normalizedOrgNumber,
+    officials,
+  };
+}
+
+/**
+ * Hämtar bolagshändelser
+ */
+export async function getCompanyEvents(orgNumber: string): Promise<{ orgNumber: string; events: CompanyEvent[] }> {
+  const normalizedOrgNumber = normalizeOrgNumber(orgNumber);
+
+  // Hämta rätt URL för händelser från navigationen
+  const urls = await getCompanyUrls(orgNumber);
+  const url = urls.handelser || buildCompanyUrl(normalizedOrgNumber, "/handelser");
+
+  const $ = await fetchPage(url);
+
+  const events: CompanyEvent[] = [];
+
+  // Testa olika strukturer
+  const selectors = [
+    ".event-item",
+    ".timeline-item",
+    ".history-item",
+    ".handelse",
+  ];
+
+  for (const selector of selectors) {
+    const elements = $(selector);
+    if (elements.length > 0) {
+      elements.each((_, element) => {
+        const $elem = $(element);
+        const date = trySelectors($, [".date", ".event-date", ".timestamp"]);
+        const title = trySelectors($, [".title", ".event-title", "h3", "h4"]);
+        const description = trySelectors($, [".description", ".event-description", "p"]);
+
+        if (title) {
+          events.push({ date, title, description });
+        }
+      });
+      
+      if (events.length > 0) break;
+    }
+  }
+
+  return {
+    orgNumber: normalizedOrgNumber,
+    events,
+  };
+}
+
+/**
+ * Hämtar ägare
+ */
+export async function getCompanyOwners(orgNumber: string): Promise<{ orgNumber: string; owners: Owner[] }> {
+  const normalizedOrgNumber = normalizeOrgNumber(orgNumber);
+
+  // Hämta rätt URL för organisation/ägare från navigationen
+  const urls = await getCompanyUrls(orgNumber);
+  const url = urls.organisation || buildCompanyUrl(normalizedOrgNumber, "/organisation");
+
+  const $ = await fetchPage(url);
+
+  const owners: Owner[] = [];
+
+  // Testa olika strukturer
+  const cardSelectors = [".owner-card", ".agare-card", ".shareholder"];
+  
+  for (const selector of cardSelectors) {
+    const elements = $(selector);
+    if (elements.length > 0) {
+      elements.each((_, element) => {
+        const $elem = $(element);
+        const name = trySelectors($, [".name", ".owner-name", "h3"]);
+        const ownership = trySelectors($, [".ownership", ".percentage", ".share"]);
+
+        if (name) {
+          owners.push({ name, ownership });
+        }
+      });
+      
+      if (owners.length > 0) break;
+    }
+  }
+
+  // Om inga kort hittades, testa tabell
+  if (owners.length === 0) {
+    $("table.owners tr, table.agare tr, .owner-table tr").each((_, row) => {
+      const $row = $(row);
+      const cells = $row.find("td");
+      
+      if (cells.length >= 2) {
+        const name = cleanText($(cells[0]).text());
+        const ownership = cleanText($(cells[1]).text());
+        
+        if (name && name !== "Namn" && name !== "Ägare") {
+          owners.push({ name, ownership });
+        }
+      }
+    });
+  }
+
+  return {
+    orgNumber: normalizedOrgNumber,
+    owners,
+  };
+}
