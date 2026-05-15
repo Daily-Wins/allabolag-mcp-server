@@ -46,7 +46,7 @@ Lägg till i `claude_desktop_config.json` (eller motsvarande MCP-config):
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/dailywins/allabolag-mcp-server",
+        "git+https://github.com/Daily-Wins/allabolag-mcp-server",
         "allabolag-mcp"
       ]
     }
@@ -59,7 +59,7 @@ Starta om Claude. Servern startar automatiskt vid första anrop, ingen prebuild 
 ### Lokal utveckling
 
 ```bash
-git clone git@github.com:dailywins/allabolag-mcp-server.git
+git clone git@github.com:Daily-Wins/allabolag-mcp-server.git
 cd allabolag-mcp-server
 uv sync
 uv run allabolag-mcp
