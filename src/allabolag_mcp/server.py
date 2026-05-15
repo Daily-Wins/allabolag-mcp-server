@@ -30,18 +30,29 @@ def get_company_details(companyId: str) -> dict:
 
 @mcp.tool()
 def get_company_financials(companyId: str) -> dict:
-    """Hämta senaste publicerade nyckeltal (omsättning, resultat, antal anställda).
+    """Hämta fem års bokslutsdata: RESULTATRÄKNING, BALANSRÄKNING, LÖNER & UTDELNING.
 
-    Endast senaste året exponeras publikt — historik kräver betald åtkomst.
+    Värden returneras som svensk-formaterade strängar (t.ex. "108 117 947", "−4,8").
+    Inkluderar bokslutsperioder (start/slut-datum) per år.
     """
     return scrapers.get_company_financials(companyId)
 
 
 @mcp.tool()
-def get_company_officials(companyId: str) -> dict:
-    """Hämta publikt synlig huvudkontakt (typiskt styrelseordförande).
+def get_company_key_figures(companyId: str) -> dict:
+    """Hämta fem års nyckeltal: vinstmarginal, soliditet, kassalikviditet, skuldsättningsgrad,
+    avkastning på eget och totalt kapital, m.fl.
 
-    Fullständig styrelse + befattningshavare kräver betald åtkomst.
+    Värden är svensk-formaterade procenttal/kvoter som strängar.
+    """
+    return scrapers.get_company_key_figures(companyId)
+
+
+@mcp.tool()
+def get_company_officials(companyId: str) -> dict:
+    """Hämta styrelse och revisorer (ordförande, ledamöter, suppleanter, revisor).
+
+    Inkluderar födelseår där tillgängligt. De-duplicerar desktop/mobile-rader.
     """
     return scrapers.get_company_officials(companyId)
 

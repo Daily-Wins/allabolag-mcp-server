@@ -8,21 +8,19 @@ Extremt lättviktig MCP-server som hämtar svensk bolagsinformation från allabo
 |---|---|
 | `search_company(query)` | Sök på företagsnamn. Returnerar `companyId` som används av övriga tools. |
 | `get_company_details(companyId)` | Grunddata: namn, orgnummer, adresser, bransch, NACE, ändamål, status, datum. |
-| `get_company_financials(companyId)` | Senaste publicerade året: omsättning, resultat, antal anställda. |
-| `get_company_officials(companyId)` | Huvudkontakt (typiskt ordförande). |
+| `get_company_financials(companyId)` | **5 års bokslut**: RESULTATRÄKNING, BALANSRÄKNING, LÖNER & UTDELNING + perioder. |
+| `get_company_key_figures(companyId)` | **5 års nyckeltal**: vinstmarginal, soliditet, kassalikviditet, skuldsättningsgrad, avkastning EK/TK, EBITDA m.fl. |
+| `get_company_officials(companyId)` | **Full styrelse + revisorer**: ordförande, ledamöter, suppleanter, huvudansvarig revisor, revisionsfirma, externa firmatecknare. |
 | `get_company_events(companyId)` | Livscykeldatum: grundande, registrering, statusändring. |
 | `get_company_owners(companyId)` | Koncernstruktur: moderbolag och antal dotterbolag. |
 
 ### Begränsningar
 
-Allabolag.se exponerar bara en begränsad mängd data publikt. Följande kräver betald åtkomst hos allabolag.se och returneras därför inte:
+Allabolag.se exponerar mycket publik data men följande kräver betald åtkomst (varje begränsat tool dokumenterar det i `note`-fält):
 
-- Historiska bokslut (mer än senaste året)
-- Fullständig styrelse / befattningshavare
 - Detaljerad aktieägarlista per andel
-- Komplett bolagshistorik
-
-Varje tool som är begränsat returnerar ett `note`-fält som förklarar exakt vad som saknas.
+- Komplett bolagshistorik (utöver registrerings-/grundningsdatum)
+- Bokslut äldre än 5 år
 
 ### Flöde
 
@@ -75,25 +73,44 @@ uv run python -c "from allabolag_mcp.scrapers import search_company; print(searc
 
 ```python
 search_company("Spotify AB")
-# → [
-#     {"name": "Spotify AB", "companyId": "2K2GXM5I5YH40", "location": "Stockholm", "url": "..."},
-#     ...
-#   ]
+# → [{"name": "Spotify AB", "companyId": "2K2GXM5I5YH40", "location": "Stockholm", ...}, ...]
 
-get_company_details("2K2GXM5I5YH40")
+get_company_financials("2K2GXM5I5YH40")
 # → {
-#     "orgNumber": "556703-7485",
-#     "name": "Spotify AB",
-#     "companyType": "Aktiebolag",
-#     "status": "ACTIVE",
-#     "registrationDate": "2006-05-10",
-#     "purpose": "Bolaget har till föremål för sin verksamhet att bedriva...",
-#     "industries": ["Radio, TV-programbolag", "Medieförmedling"],
-#     "naceIndustries": ["60100 Radiosändning och distribution av ljudinspelningar"],
-#     "visitorAddress": "Regeringsgatan 19 5tr, 111 53, Stockholm",
-#     ...
+#     "years": ["2024-12", "2023-12", "2022-12", "2021-12", "2020-12"],
+#     "periods": [{"year": "2024-12", "startDate": "2024-01-01", "endDate": "2024-12-31"}, ...],
+#     "incomeStatement": {
+#       "Nettoomsättning": ["108 117 947", "88 766 846", "77 992 123", "60 983 463", "49 468 447"],
+#       "Årets resultat": ["10 046 736", "−1 894 831", "−4 757 506", "4 055 213", "−4 049 392"],
+#       ...
+#     },
+#     "balanceSheet": { "Summa tillgångar": [...], ... },
+#     "salariesAndDividends": { "Löner styrelse och VD": [...], ... }
+#   }
+
+get_company_key_figures("2K2GXM5I5YH40")
+# → {
+#     "years": ["2024-12", ..., "2020-12"],
+#     "keyFigures": {
+#       "Vinstmarginal i %": ["9", "−1,7", "−4,8", "7,1", "−5,3"],
+#       "Soliditet i %": ["55,6", "43,5", "44", "49", "44,4"],
+#       ...
+#     }
+#   }
+
+get_company_officials("2K2GXM5I5YH40")
+# → {
+#     "officials": [
+#       {"role": "Ordförande", "name": "Carl Peter Christian Luiga", "birthYear": "1968"},
+#       {"role": "Ledamot", "name": "Marcus Anders Glimberg", "birthYear": "1984"},
+#       {"role": "Huvudansvarig revisor", "name": "Jakob Tomas Christoffer Grunditz", "birthYear": "1987"},
+#       {"role": "Revisor", "name": "Ernst & Young Aktiebolag"},
+#       ...
+#     ]
 #   }
 ```
+
+Värden i bokslut/nyckeltal levereras som **svensk-formaterade strängar** (mellanslag som tusentalsavgränsare, komma som decimaltecken, U+2212 som minustecken) så att klienter kan rendera eller parsa som de behöver.
 
 ## Stack
 
