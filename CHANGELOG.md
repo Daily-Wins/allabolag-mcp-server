@@ -1,56 +1,52 @@
 # Changelog
 
-All notable changes to the Allabolag MCP Server will be documented in this file.
+All notable changes to allabolag-mcp will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2024-10-01
+## [0.3.0] — 2026-05-15
 
 ### Added
-- Initial release of Allabolag MCP Server
-- `search_company` tool - Search for companies by name or organization number
-- `get_company_details` tool - Get detailed company information
-- `get_company_financials` tool - Get financial data and key figures
-- `get_company_officials` tool - Get board members and officials
-- `get_company_events` tool - Get company events and history
-- `get_company_owners` tool - Get ownership information
-- Comprehensive documentation (README, INSTALL, EXAMPLES, QUICKSTART)
-- TypeScript support with full type definitions
-- Modular architecture with scrapers and utils
-- Error handling and fallback selectors for robust scraping
-- Support for multiple HTML structures on allabolag.se
+- `get_company_key_figures(companyId)` — 5 års nyckeltal (vinstmarginal, soliditet, kassalikviditet, skuldsättningsgrad, avkastning EK/TK, anställda, personalkostnader per anställd, EBITDA).
 
-### Technical Details
-- Built with @modelcontextprotocol/sdk v0.5.0
-- Uses cheerio for HTML parsing
-- Uses node-fetch for HTTP requests
-- TypeScript 5.3+ with strict mode enabled
-- Stdio transport for MCP communication
+### Changed
+- `get_company_financials` returnerar nu **5 års bokslut** (RESULTATRÄKNING, BALANSRÄKNING, LÖNER & UTDELNING) plus bokslutsperioder — istället för bara senaste årets sammandrag.
+- `get_company_officials` returnerar nu **full styrelse + revisorer + externa firmatecknare** med födelseår — istället för bara huvudkontakten.
 
-## [Unreleased]
+### Discovered
+Browser-utforskning via Claude in Chrome avslöjade tre publika subroute-sidor som tidigare antagits paywallade:
+- `/bokslut/-/-/-/{companyId}` — 5 års resultaträkning + balansräkning
+- `/nyckeltal/-/-/-/{companyId}` — 5 års nyckeltal
+- `/befattningshavare/-/-/-/{companyId}` — full styrelse + revisorer
 
-### Planned Features
-- Caching to reduce API calls
-- Rate limiting configuration
-- Support for batch operations
-- Export functionality (CSV, JSON)
-- More detailed financial analysis
-- Historical data tracking
-- Company comparison tools
-- Industry statistics aggregation
+`-/-/-`-tricket triggar redirect till canonical slug-URL utan att kräva namn/stad/bransch i path.
 
-### Known Issues
-- Some pages on allabolag.se may have different HTML structures
-- Rate limiting may occur with many consecutive requests
-- Some features may require login on allabolag.se (not yet implemented)
+## [0.2.0] — 2026-05-15
 
-## Contributing
+### Changed
+Komplett rewrite från Node/TypeScript till Python + scrapling:
 
-Contributions are welcome! Please see CONTRIBUTING.md for details.
+- **Stack**: Node + Cheerio + Docker + Cloud Run → Python 3.11+ + scrapling + uv + stdio
+- **Datakälla**: CSS-scraping av presentationslagret → JSON-extraktion från `__NEXT_DATA__` SSR-payload
+- **Primärnyckel**: orgnummer → `companyId` (allabolag.se accepterar inte orgnummer som söknyckel publikt sedan UI-omläggningen)
+- **Flöde**: `search_company → get_company_*` (två steg)
+- **Begränsade tools** (officials, events, owners) returnerar publik subset + `note`-fält som dokumenterar paywall-data
 
-## Support
+### Removed
+- Docker, Cloud Run-deploy, Express-proxy, Azurite blob-cache, mcpb-bundling, alla shell-skript
+- Hela `src/`-trädet från Node-versionen (TS-källkoden bevaras som `ref/scrapers.ts.ref` och `ref/utils.ts.ref` för referens)
+- Cirka 30 ad-hoc `test-*.js`-skript flyttade till `ref/legacy-tests/`
 
-For issues and questions:
-- GitHub Issues: [Create an issue]
-- Documentation: See README.md, INSTALL.md, EXAMPLES.md
+### Published
+- GitHub: https://github.com/Daily-Wins/allabolag-mcp-server (public)
+- Installation: `uvx --from git+https://github.com/Daily-Wins/allabolag-mcp-server allabolag-mcp`
+
+## [1.0.0] — 2024-10-01 *(pre-rewrite, Node/TypeScript)*
+
+Initial Node/TypeScript-implementation. Bevarat som referens i `ref/`:
+- `ref/scrapers.ts.ref` — CSS-selektorer för historisk allabolag.se-struktur
+- `ref/utils.ts.ref` — HTTP-klient, normalisering, fallback-logik
+- `ref/legacy-tests/*.js` — 25 testskript mot kända bolag (Spotify, Benify, Raion, Lovable m.fl.)
+
+Code path är inte längre funktionell — sajten har bytt URL-struktur. Använd 0.2.0+.

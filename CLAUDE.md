@@ -60,4 +60,4 @@ src/allabolag_mcp/
 - Respektera rate limits — scrapling har inbyggda fördröjningar men anropa inte servern i tight loop
 - All text på allabolag.se är svenska — behåll svenska fältvärden, översätt inte
 - Vid HTML-ändringar: kolla `__NEXT_DATA__`-strukturen först (den är stabilare än markup)
-- Reference: `ref/scrapers.ts.ref` och `ref/utils.ts.ref` innehåller historiska CSS-selektorer från Node-versionen — användbart vid debugging
+- Reference: `ref/scrapers.ts.ref` och `ref/utils.ts.ref` innehåller historiska CSS-selektorer från Node-versionen. `ref/legacy-tests/*` är 25 Node-testskript mot kända bolag (Spotify, Benify, Raion m.fl.) — användbart vid debugging av regression mot riktiga orgnummer.
